@@ -310,7 +310,7 @@ def plot_error_bars(df: pd.DataFrame,
     """Plot quantification estimates (with error bars) for the given
     methods against the true quantification. Also plot bars of
     gain/loss weights."""
-    markersize = 16
+    markersize = 12
     linewidth = 4
     df = df.sort_values(by=['target_class', 'random_state', 'loss_weight', 'gain_weight', 'bin_count'])
 
@@ -324,21 +324,21 @@ def plot_error_bars(df: pd.DataFrame,
         # distribution in the target distribution.
         y=(df['loss_weight'] * (1 - df['gain_weight'])),  # type: ignore
         name='Loss (relative to gain)    ',
-        marker=dict(color='#FFBBBB', line=dict(color='black', width=2)),
+        marker=dict(color='#FFDDDD', line=dict(color='black', width=2)),
     ))
     fig.add_trace(go.Bar(
         x=x_axis('True weights'),
         y=df['gain_weight'],
         name='Gain',
-        marker=dict(color='#DFFFDF', line=dict(color='black', width=2)),
+        marker=dict(color='#F5FFF5', line=dict(color='black', width=2)),
     ))
 
     all_methods = {
-        'pcc': ('PCC estimate', 'pcc', px.colors.qualitative.Alphabet[13]),
-        'em': ('EM estimate', 'em', px.colors.qualitative.Plotly[4]),
-        'gsls': ('GSLS estimate', gsls_method, px.colors.qualitative.Plotly[1]),
+        'gsls': ('GSLS estimate', 'gsls', '#544200', 16, 10),
+        'em': ('EM estimate', 'em', '#F72DFF', 13, 9),
+        'pcc': ('PCC estimate', 'pcc', '#3BD0EB', 10, 8),
     }
-    for name, method, color in select_keys(all_methods, methods).values():
+    for name, method, color, markersize, barwidth in select_keys(all_methods, methods).values():
         fig.add_trace(go.Scatter(
             x=x_axis('True weights'),
             y=df[f'{method}_count'] / df['test_n'],
@@ -351,7 +351,7 @@ def plot_error_bars(df: pd.DataFrame,
                 array=(df[f'{method}_count_upper'] - df[f'{method}_count']) / df['test_n'],
                 arrayminus=(df[f'{method}_count'] - df[f'{method}_count_lower']) / df['test_n'],
                 thickness=linewidth * 0.8,
-                width=10,
+                width=barwidth,
             ),
         ), secondary_y=True)
 
@@ -359,7 +359,7 @@ def plot_error_bars(df: pd.DataFrame,
         x=x_axis('True weights'),
         y=df['test_true_count'] / df['test_n'],
         name='True class proportion  ',
-        marker=dict(color='#000000', size=markersize),
+        marker=dict(color='#000000', size=12, symbol='x'),
         mode='markers',
     ), secondary_y=True)
 
@@ -384,7 +384,7 @@ def plot_error_bars(df: pd.DataFrame,
             name='divider',
             marker=dict(color='black'),
         ))
-    fig.update_yaxes(secondary_y=False, side='right', title='Dataset shift',
+    fig.update_yaxes(secondary_y=False, side='right', title='Degree of dataset shift',
                      tickformat='%', showgrid=False)
     fig.update_yaxes(secondary_y=True, side='left', title='Class proportion',
                      tickformat='%', showgrid=False)
