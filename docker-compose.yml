@@ -1,0 +1,22 @@
+version: '3.4'
+services:
+  jupyter:
+    image: "${BASE_IMAGE_NAME}-dev"
+    build:
+      context: .
+      target: dev_image
+    ports:
+      - '9999:9999'
+    volumes:
+      - .:/home/jovyan/work
+    # cap_add, devices, and security_opt are required for fuse, which
+    # is required by orca, which is required for Plotly:
+    # https://github.com/s3fs-fuse/s3fs-fuse/issues/647#issuecomment-392697838
+    # and
+    # https://github.com/moby/moby/issues/16233#issuecomment-144924721
+    cap_add:
+      - SYS_ADMIN
+    devices:
+      - "/dev/fuse"
+    security_opt:
+      - apparmor:unconfined

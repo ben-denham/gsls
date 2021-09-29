@@ -1,0 +1,7 @@
+# Files/directories included in this file will not be visible to
+# Docker while building images. Excluding large files makes building
+# Docker images faster:
+# https://docs.docker.com/develop/develop-images/dockerfile_best-practices/#exclude-with-dockerignore
+
+data/
+notebooks/*results/
