@@ -3,7 +3,7 @@ import pandas as pd
 import pytest
 
 from pyquantification.utils import check_dict_almost_equal
-from pyquantification.datasets import Dataset, Component
+from pyquantification.datasets import ConceptsDataset, SamplesDataset, Component
 from pyquantification.experiments.splitting import (
     check_class_priors,
     get_class_priors,
@@ -20,7 +20,7 @@ from pyquantification.experiments.splitting import (
 
 
 def test_get_class_priors() -> None:
-    dataset = Dataset(pd.DataFrame({
+    dataset = ConceptsDataset(pd.DataFrame({
         'concept': ['a', 'a', 'a', 'a', 'a', 'a', 'b', 'b', 'b', 'b'],
         'class':   ['t', 't', 't', 't', 'f', 'f', 't', 't', 'f', 'f'],
     }), train_n=1, test_n=1)
@@ -94,7 +94,7 @@ def test_check_prior_shift_assumption() -> None:
 
 
 def test_random_class_priors() -> None:
-    dataset = Dataset(pd.DataFrame({
+    dataset = ConceptsDataset(pd.DataFrame({
         'concept': ['a', 'a', 'a', 'a', 'a', 'a', 'b', 'b', 'b', 'b', 'b', 'b'],
         'class':   ['t', 't', 'u', 'u', 'f', 'f', 't', 't', 'f', 'f', 'u', 'u'],
     }), train_n=1, test_n=1)
@@ -173,7 +173,7 @@ def test_sample_indexes_for_components() -> None:
         'concept': (['a'] * 500) + (['b'] * 500),
         'class':   ['t', 'f'] * 500,
     }, index=list(reversed(range(1000))))
-    dataset = Dataset(df, train_n=100, test_n=100)
+    dataset = ConceptsDataset(df, train_n=100, test_n=100)
     components = {
         'a': Component(['a'], 0.4, {'t': 0.25, 'f': 0.75}),
         'b': Component(['b'], 0.6, {'t': 0.5, 'f': 0.5}),
@@ -197,7 +197,7 @@ def test_split_train_calib() -> None:
         'concept': (['a'] * 500) + (['b'] * 500),
         'class':   ['t', 'f'] * 500,
     }, index=list(reversed(range(1000))))
-    dataset = Dataset(df, train_n=100, test_n=100, calib_size=0.4)
+    dataset = ConceptsDataset(df, train_n=100, test_n=100, calib_size=0.4)
     split = split_train_calib(
         dataset,
         random_state=1,
@@ -222,12 +222,33 @@ def test_split_train_calib() -> None:
     assert split['datasets']['rest'].df.shape[0] == 900
 
 
+def test_split_train_calib_samples() -> None:
+    df = pd.DataFrame({
+        'sample': (['a'] * 500) + (['b'] * 700),
+        'class':   ['t', 'f'] * 600,
+    }, index=list(reversed(range(1200))))
+    dataset = SamplesDataset(df, train_samples={'a'}, calib_size=0.4)
+    split = split_train_calib(
+        dataset,
+        random_state=0,
+        loss_weight=0,
+        loss_random_prior=False,
+        remain_random_prior=False,
+        loss_concept_count=0,
+        remain_concept_count=0,
+    )
+    assert split['components'] == {}
+    assert split['datasets']['train'].df.shape[0] == 300
+    assert split['datasets']['calib'].df.shape[0] == 200
+    assert split['datasets']['rest'].df.shape[0] == 700
+
+
 def test_split_test_gsls_shift() -> None:
     df = pd.DataFrame({
         'concept': (['a'] * 200) + (['b'] * 300) + (['c'] * 500),
         'class':   ['t', 'f'] * 500,
     }, index=list(reversed(range(1000))))
-    dataset = Dataset(df, train_n=50, test_n=50, calib_size=0.4)
+    dataset = ConceptsDataset(df, train_n=50, test_n=50, calib_size=0.4)
     train_components = {
         'loss': Component(['a'], 0.4, {'t': 0.5, 'f': 0.5}),
         'remain': Component(['b'], 0.6, {'t': 0.25, 'f': 0.75}),
@@ -238,6 +259,7 @@ def test_split_test_gsls_shift() -> None:
         shift_type='gsls_shift',
         gain_weight=0.6,
         random_state=1,
+        sample_idx=None,
         gain_random_prior=True,
     )
     assert split['components']['gain'].concepts == ['c']
@@ -258,7 +280,7 @@ def test_split_test_prior_shift() -> None:
         'concept': (['a'] * 200) + (['b'] * 300) + (['c'] * 500),
         'class':   ['t', 'f'] * 500,
     }, index=list(reversed(range(1000))))
-    dataset = Dataset(df, train_n=50, test_n=50, calib_size=0.4)
+    dataset = ConceptsDataset(df, train_n=50, test_n=50, calib_size=0.4)
     train_components = {
         'loss': Component(['a'], 0.4, {'t': 0.5, 'f': 0.5}),
         'remain': Component(['b'], 0.6, {'t': 0.25, 'f': 0.75}),
@@ -269,6 +291,7 @@ def test_split_test_prior_shift() -> None:
         shift_type='prior_shift',
         gain_weight=0.6,
         random_state=1,
+        sample_idx=None,
         gain_random_prior=True,
     )
     assert split['components']['loss'].concepts == ['a']
@@ -283,3 +306,22 @@ def test_split_test_prior_shift() -> None:
     assert check_class_priors(split['components']['remain'].class_priors)
     assert split['datasets']['test'].df.shape[0] == 50
     assert check_prior_shift_assumption(train_components, split['components'])
+
+
+def test_split_test_samples() -> None:
+    df = pd.DataFrame({
+        'sample': (['a'] * 200) + (['c'] * 300) + (['b'] * 700),
+        'class':   ['t', 'f'] * 600,
+    }, index=list(reversed(range(1200))))
+    dataset = SamplesDataset(df, train_samples={'a'})
+    split = split_test(
+        dataset,
+        train_components={},
+        shift_type='no_shift',
+        gain_weight=0,
+        random_state=0,
+        sample_idx=1,
+        gain_random_prior=False,
+    )
+    assert split['components'] == {}
+    assert split['datasets']['test'].df.shape[0] == 300

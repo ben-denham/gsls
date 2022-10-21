@@ -4,4 +4,5 @@
 # https://docs.docker.com/develop/develop-images/dockerfile_best-practices/#exclude-with-dockerignore
 
 data/
+.pip-packages/
 notebooks/*results/

@@ -1,3 +1,4 @@
+import numpy as np
 from typing import Any, Dict, Sequence
 
 
@@ -36,3 +37,9 @@ def check_dict_almost_equal(dict_a: Dict[Any, float],
         if abs(dict_a[key] - dict_b[key]) >= (1.5 * 10**(-decimal)):
             return False
     return True
+
+
+def mask_to_indexes(mask: np.ndarray) -> np.ndarray:
+    """Return a sequence of the indexes marked as 1 in the given mask."""
+    assert len(mask.shape) == 1
+    return mask.nonzero()[0]

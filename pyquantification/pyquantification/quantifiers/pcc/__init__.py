@@ -26,6 +26,11 @@ def get_poibin_interval(probs: Probs, mass: float) -> PredictionInterval:
             # extremely high or low probabilities), fall back to a
             # Gaussian approximation.
             variance = np.sum((1 - probs) * probs)
+            # Handle zero variance with a minimal interval.
+            if variance == 0:
+                return PredictionInterval(prediction=mean,
+                                          lower=int(np.floor(mean)),
+                                          upper=int(np.ceil(mean)))
             pdf = scipy.stats.norm.pdf(xs, loc=mean, scale=np.sqrt(variance))
             # Gaussian cdf extends beyond 0-1 range, so we compute the
             # cdf from a normalised pdf.

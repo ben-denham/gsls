@@ -46,8 +46,20 @@ def test_adjust_to_priors() -> None:
 
 def test_get_em_confidence_interval() -> None:
     # Directly test edge cases
-    assert get_em_confidence_interval(0.5, 0.8, np.array([]), 0.8) == PredictionInterval(0, 0, 0)
-    assert get_em_confidence_interval(0.5, 0.8, np.array([0.5] * 100), 0.5) == PredictionInterval(80, 0, 100)
+    assert (
+        get_em_confidence_interval(0.5, 0.8, np.array([]), 0.8)
+        == PredictionInterval(0, 0, 0, stats={
+            'source_prior': 0.5,
+            'adjusted_prior': 0.8,
+        })
+    )
+    assert (
+        get_em_confidence_interval(0.5, 0.8, np.array([0.5] * 100), 0.5)
+        == PredictionInterval(80, 0, 100, stats={
+            'source_prior': 0.5,
+            'adjusted_prior': 0.8,
+        })
+    )
 
 
 def test_EmQuantifier() -> None:

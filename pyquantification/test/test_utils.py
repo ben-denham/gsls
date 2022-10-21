@@ -1,9 +1,12 @@
+import numpy as np
+import pytest
 from pyquantification.utils import (
     select_keys,
     prefix_keys,
     dict_first,
     normalise_dict,
     check_dict_almost_equal,
+    mask_to_indexes,
 )
 
 
@@ -36,3 +39,12 @@ def test_check_dict_almost_equal() -> None:
     assert check_dict_almost_equal({'a': 1, 'b': 2.345},
                                    {'a': 1, 'b': 2.346},
                                    2) is True
+
+
+def test_mask_to_indexes() -> None:
+    np.testing.assert_array_equal(mask_to_indexes(np.array([])), [])
+    np.testing.assert_array_equal(mask_to_indexes(np.array([0, 1, 1, 0, 1])), [1, 2, 4])
+    with pytest.raises(AssertionError):
+        mask_to_indexes(np.array([
+            [0, 1, 1, 0, 1]
+        ]))

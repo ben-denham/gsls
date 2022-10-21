@@ -1,8 +1,8 @@
 # GSLS Quantification
 
 Contains source-code for experimentation with PCC, EM, and GSLS
-quantification methods, as used in the paper "Gain-Some-Lose-Some:
-Reliable Quantification Under General Dataset Shift".
+quantification methods, as used in the paper "Dynamic Quantification
+with Constrained Error Under Unknown General Dataset Shift".
 
 ## Dependencies
 
@@ -36,11 +36,21 @@ into Git bash, then you should be able to run this project on Windows.
 
 | Notebook | Description |
 | -------- | ----------- |
-| [ExampleGslsHistograms](http://localhost:9999/notebooks/ExampleGslsHistograms.ipynb) | Histogram plots used to demonstrate GSLS model. |
-| [QuantificationUnderGslsShift](http://localhost:9999/notebooks/QuantificationUnderGslsShift.ipynb) | Comparison of quantification methods under GSLS shift. |
-| [QuantificationUnderPriorShift](http://localhost:9999/notebooks/QuantificationUnderPriorShift.ipynb) | Comparison of quantification methods under prior shift. |
-| [SensitivityAnalysis](http://localhost:9999/notebooks/SensitivityAnalysis.ipynb) | Analysis of GSLS quantification's sensitivity to histogram bin and target instance counts. |
-| [PaperTables](http://localhost:9999/notebooks/PaperTables.ipynb) | Generation of tables of results presented in the paper from cached experiment outcomes. |
+| [01_ExampleGslsHistograms](http://localhost:9999/notebooks/01_ExampleGslsHistograms.ipynb) | Histogram plots used to demonstrate GSLS model. |
+| [02_QuantificationSensitivityAnalysis](http://localhost:9999/notebooks/02_QuantificationSensitivityAnalysis.ipynb) | Analysis of GSLS quantification's sensitivity to histogram bin and target instance counts. |
+| [03_QuantificationUnderGslsShift](http://localhost:9999/notebooks/03_QuantificationUnderGslsShift.ipynb) | Comparison of quantification methods under GSLS shift. |
+| [04_QuantificationUnderPriorShift](http://localhost:9999/notebooks/04_QuantificationUnderPriorShift.ipynb) | Comparison of quantification methods under prior shift. |
+| [05_QuantificationPaperTables](http://localhost:9999/notebooks/05_QuantificationPaperTables.ipynb) | Generation of tables of quantification results presented in the paper from cached experiment outcomes. |
+| [06_ShiftTestsRuntime](http://localhost:9999/notebooks/06_ShiftTestsRuntime.ipynb) | Comparison of the runtime of shift tests. |
+| [07_ShiftTestsUnderGslsShift](http://localhost:9999/notebooks/07_ShiftTestsUnderGslsShift.ipynb) | Comparison of shift tests under GSLS shift. |
+| [08_ShiftTestsUnderPriorShift](http://localhost:9999/notebooks/08_ShiftTestsUnderPriorShift.ipynb) | Comparison of shift tests under prior shift. |
+| [09_ShiftTestTables](http://localhost:9999/notebooks/09_ShiftTestTables.ipynb) | Generation of tables of shift test results presented in the paper from cached experiment outcomes. |
+| [10_QuantificationAndShiftTestsUnderSampleShift](http://localhost:9999/notebooks/10_QuantificationAndShiftTestsUnderSampleShift.ipynb) | Comparison of quantification methods and shift tests under sample (real-world) shift. |
+| [11_SampleShiftQuantificationAndShiftTestTables](http://localhost:9999/notebooks/11_SampleShiftQuantificationAndShiftTestTables.ipynb) | Generation of tables of quantification and shift test results for sample (real-world) shift presented in the paper from cached experiment outcomes. |
+| [12_RejectionUnderSampleShiftRuntime](http://localhost:9999/notebooks/12_RejectionUnderSampleShiftRuntime.ipynb) | Comparison of the runtime of rejection (constrained quantification) methods. |
+| [13_RejectionUnderSampleShift](http://localhost:9999/notebooks/13_RejectionUnderSampleShift.ipynb) | Comparison of rejection (constrained quantification) methods under sample (real-world) shift. |
+| [14_RejectionUnderSyntheticShift](http://localhost:9999/notebooks/14_RejectionUnderSyntheticShift.ipynb) | Comparison of rejection (constrained quantification) methods under synthetic (GSLS and prior) shift. |
+| [15_RejectionTables](http://localhost:9999/notebooks/15_RejectionTables.ipynb) | Generation of tables of rejection (constrained quantification) results presented in the paper from cached experiment outcomes. |
 
 ### Linting
 

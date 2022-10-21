@@ -2,10 +2,11 @@ from collections import Counter
 import numpy as np
 import pandas as pd
 from sklearn.model_selection import train_test_split
-from typing import Optional, Dict, Any, Sequence
+from typing import cast, Optional, Dict, Any, Sequence
 
 from pyquantification.utils import normalise_dict, check_dict_almost_equal
-from pyquantification.datasets import (Dataset, Component, Components,
+from pyquantification.datasets import (Dataset, ConceptsDataset, SamplesDataset,
+                                       Component, Components,
                                        Concepts, ClassPriors)
 
 # Use a different seed for each stage of an experiment to prevent
@@ -33,7 +34,7 @@ def check_class_priors(class_priors: ClassPriors, raise_error: bool = False) -> 
     return valid
 
 
-def get_class_priors(dataset: Dataset, *,
+def get_class_priors(dataset: ConceptsDataset, *,
                      concepts: Optional[Concepts] = None) -> ClassPriors:
     """Return the empirical class_priors of the given dataset (optionally
     filtered to the given concepts)."""
@@ -49,6 +50,9 @@ def get_class_priors(dataset: Dataset, *,
 def get_class_priors_for_components(components: Components) -> ClassPriors:
     """Return the overall class_priors for the weighted component
     class_priors (i.e. P(y) = sum_concept P(y|concept)P(concept))."""
+    if not components:
+        return {}
+
     # Each column is a y_class, each row in a component, each
     # cell is the component's weighted class prior
     weighted_class_priors_df = pd.DataFrame([
@@ -264,7 +268,7 @@ def adjust_components_for_prior_shift(*, classes: Sequence[str],
 
 # DATASET SAMPLING
 
-def sample_indexes_for_components(dataset: Dataset, *,
+def sample_indexes_for_components(dataset: ConceptsDataset, *,
                                   n: int,
                                   components: Components,
                                   rng: np.random.RandomState,
@@ -328,38 +332,47 @@ def split_train_calib(dataset: Dataset, *,
     Returns the datasets, as well as the components of the
     training+calib distribution."""
     rng = np.random.RandomState(random_state * TRAIN_SPLIT_RANDOM_SEED)
-    # Pick random loss and remain concepts.
-    concepts = rng.choice(dataset.concepts,
-                          size=(loss_concept_count + remain_concept_count),
-                          replace=False)
-    loss_concepts = concepts[:loss_concept_count]
-    remain_concepts = concepts[loss_concept_count:]
-    # Configure loss/remain components for the training distribution.
-    components = {
-        'loss': Component(
-            concepts=loss_concepts,
-            weight=loss_weight,
-            # Optionally randomly shift the loss class_priors.
-            class_priors=(random_class_priors(dataset, rng=rng)
-                          if loss_random_prior else
-                          get_class_priors(dataset, concepts=loss_concepts))
-        ),
-        'remain': Component(
-            concepts=remain_concepts,
-            weight=(1 - loss_weight),
-            # Optionally randomly shift the remain class_priors.
-            class_priors=(random_class_priors(dataset, rng=rng)
-                          if remain_random_prior else
-                          get_class_priors(dataset, concepts=remain_concepts))
-        ),
-    }
-    # Create dfs of instances in/not-in the full training set.
-    full_train_index = sample_indexes_for_components(
-        dataset,
-        n=dataset.train_n,
-        components=components,
-        rng=rng,
-    )
+
+    if isinstance(dataset, ConceptsDataset):
+        dataset = cast(ConceptsDataset, dataset)
+        # Pick random loss and remain concepts.
+        concepts = rng.choice(dataset.concepts,
+                              size=(loss_concept_count + remain_concept_count),
+                              replace=False)
+        loss_concepts = concepts[:loss_concept_count]
+        remain_concepts = concepts[loss_concept_count:]
+        # Configure loss/remain components for the training distribution.
+        components = {
+            'loss': Component(
+                concepts=loss_concepts,
+                weight=loss_weight,
+                # Optionally randomly shift the loss class_priors.
+                class_priors=(random_class_priors(dataset, rng=rng)
+                              if loss_random_prior else
+                              get_class_priors(dataset, concepts=loss_concepts))
+            ),
+            'remain': Component(
+                concepts=remain_concepts,
+                weight=(1 - loss_weight),
+                # Optionally randomly shift the remain class_priors.
+                class_priors=(random_class_priors(dataset, rng=rng)
+                              if remain_random_prior else
+                              get_class_priors(dataset, concepts=remain_concepts))
+            ),
+        }
+        # Create dfs of instances in/not-in the full training set.
+        full_train_index = sample_indexes_for_components(
+            dataset,
+            n=dataset.train_n,
+            components=components,
+            rng=rng,
+        )
+    elif isinstance(dataset, SamplesDataset):
+        dataset = cast(SamplesDataset, dataset)
+        components = {}
+        full_train_index = dataset.get_train_index()
+    else:
+        raise ValueError(f'Unrecognised dataset type: {type(dataset)}')
     full_train_df = dataset.df.loc[full_train_index]
     rest_df = dataset.df.loc[dataset.df.index.difference(full_train_index)]
     # Split the full training set into training/calibration sets.
@@ -386,7 +399,7 @@ def split_train_calib(dataset: Dataset, *,
     }
 
 
-def split_test_without_gsls_shift(dataset: Dataset, *,
+def split_test_without_gsls_shift(dataset: ConceptsDataset, *,
                                   train_components: Components,
                                   random_state: int,
                                   random_prior: bool = False) -> Dict[str, Any]:
@@ -421,7 +434,7 @@ def split_test_without_gsls_shift(dataset: Dataset, *,
     }
 
 
-def split_test_with_gsls_shift(dataset: Dataset, *,
+def split_test_with_gsls_shift(dataset: ConceptsDataset, *,
                                train_components: Components,
                                random_state: int,
                                gain_concept_count: int = 1,
@@ -477,6 +490,7 @@ def split_test(dataset: Dataset, *,
                shift_type: str,
                gain_weight: float,
                random_state: int,
+               sample_idx: Optional[int],
                gain_random_prior: bool) -> Dict[str, Any]:
     """Given a dataset (assumed to be the 'rest' dataset from training
     sampling), sample a test set of dataset.test_n instances. The
@@ -486,17 +500,29 @@ def split_test(dataset: Dataset, *,
     Returns the test dataset, as well as the components of the test
     distribution.
     """
-    if shift_type == 'gsls_shift':
-        return split_test_with_gsls_shift(dataset,
-                                          train_components=train_components,
-                                          gain_weight=gain_weight,
-                                          gain_random_prior=gain_random_prior,
-                                          random_state=random_state)
-    elif shift_type in ['no_shift', 'prior_shift']:
-        random_prior = (shift_type == 'prior_shift')
-        return split_test_without_gsls_shift(dataset,
-                                             train_components=train_components,
-                                             random_prior=random_prior,
-                                             random_state=random_state)
+    if isinstance(dataset, ConceptsDataset):
+        if shift_type == 'gsls_shift':
+            return split_test_with_gsls_shift(dataset,
+                                              train_components=train_components,
+                                              gain_weight=gain_weight,
+                                              gain_random_prior=gain_random_prior,
+                                              random_state=random_state)
+        elif shift_type in ['no_shift', 'prior_shift']:
+            random_prior = (shift_type == 'prior_shift')
+            return split_test_without_gsls_shift(dataset,
+                                                 train_components=train_components,
+                                                 random_prior=random_prior,
+                                                 random_state=random_state)
+        else:
+            raise ValueError(f'Unknown shift_type: {shift_type}')
+    elif isinstance(dataset, SamplesDataset):
+        dataset = cast(SamplesDataset, dataset)
+        assert sample_idx is not None
+        return {
+            'components': {},
+            'datasets': {
+                'test': dataset.subset(dataset.df.loc[dataset.get_test_index(cast(int, sample_idx))]),
+            },
+        }
     else:
-        raise ValueError(f'Unknown shift_type: {shift_type}')
+        raise ValueError(f'Unrecognised dataset type: {type(dataset)}')

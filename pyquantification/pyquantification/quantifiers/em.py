@@ -143,6 +143,10 @@ def get_em_confidence_interval(source_pos_prior: float,
         # represent discrete counts.
         lower=int(np.floor(lower * target_count)),
         upper=int(np.ceil(upper * target_count)),
+        stats={
+            'source_prior': source_pos_prior,
+            'adjusted_prior': adjusted_pos_prior,
+        },
     )
 
 

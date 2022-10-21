@@ -1,3 +1,6 @@
+# coding: utf-8
+
+from abc import ABC, abstractmethod
 from datetime import datetime
 from functools import partial
 from math import ceil
@@ -9,6 +12,8 @@ import re
 from copy import deepcopy
 from typing import cast, Any, Callable, Optional, Mapping, Dict, Set, Sequence, NamedTuple
 from joblib import dump, load
+from zipfile import ZipFile
+from pyreadr import read_r
 
 # Use a different seed for each stage of an experiment to prevent
 # overlaps and unintended correlation. Different orders of magnitude
@@ -18,49 +23,18 @@ DATASET_RANDOM_SEED = 1_000_000_000
 
 # Types
 
-Concepts = Sequence[str]
-ClassPriors = Dict[str, float]
-
-
-class Component(NamedTuple):
-    concepts: Concepts
-    weight: float
-    class_priors: ClassPriors
-
-
-Components = Dict[str, Component]
-
-
-class Dataset():
+class Dataset(ABC):
 
     def __init__(self,
                  df: pd.DataFrame, *,
-                 train_n: int,
-                 test_n: int,
-                 calib_size: float = 0.5,
-                 numeric_features: Optional[Set[str]] = None) -> None:
+                 calib_size: float,
+                 numeric_features: Optional[Set[str]]) -> None:
         self.name = 'UNNAMED'
         self.df = df.reset_index()
         self.classes = sorted(self.df['class'].unique())
-        self.train_n = train_n
-        self.test_n = test_n
         self.calib_size = calib_size
         self.numeric_features = (set() if numeric_features is None
                                  else set(numeric_features))
-
-        # To support our sampling approach, there should be enough
-        # instances for each concept+y_class pair to fill the entire
-        # train and test sets.
-        full_sample_size = self.train_n + self.test_n
-        class_concept_counts = self.df.groupby(['concept', 'class']).count()['index']
-        for concept in self.df['concept']:
-            for y_class in self.classes:
-                subset_count = class_concept_counts[concept, y_class]
-                if subset_count < full_sample_size:
-                    raise ValueError(f'Only {subset_count} instances available for '
-                                     f'class "{y_class}" in concept "{concept}", while the '
-                                     f'maximum number that may be sampled is the full '
-                                     f'train and test size: {full_sample_size}')
 
     def set_name(self, name: str) -> None:
         self.name = name
@@ -83,6 +57,70 @@ class Dataset():
     def indexes(self) -> np.ndarray:
         return self.df.index.to_numpy()
 
+    def subset(self, subset_df: pd.DataFrame) -> 'Dataset':
+        # Don't use the constructor, otherwise we'd reset df.index.
+        subdataset = deepcopy(self)
+        subdataset.df = subset_df
+        return subdataset
+
+    def without_X(self):
+        """Return a new copy of the dataset without any feature columns (to
+        save space)."""
+        without_X_df = self.df.drop(self.all_features, axis='columns')
+        return self.subset(without_X_df)
+
+    @property
+    @abstractmethod
+    def train_n(self):
+        pass
+
+
+Concepts = Sequence[str]
+ClassPriors = Dict[str, float]
+
+
+class Component(NamedTuple):
+    concepts: Concepts
+    weight: float
+    class_priors: ClassPriors
+
+
+Components = Dict[str, Component]
+
+
+class ConceptsDataset(Dataset):
+    """A Dataset that can be used to simulate shift between known concepts."""
+
+    def __init__(self,
+                 df: pd.DataFrame, *,
+                 train_n: int,
+                 test_n: int,
+                 calib_size: float = 0.5,
+                 numeric_features: Optional[Set[str]] = None,
+                 skip_concept_check: bool = False) -> None:
+        super().__init__(df, calib_size=calib_size, numeric_features=numeric_features)
+        self._train_n = train_n
+        self.test_n = test_n
+
+        if not skip_concept_check:
+            # To support our sampling approach, there should be enough
+            # instances for each concept+y_class pair to fill the entire
+            # train and test sets.
+            full_sample_size = self.train_n + self.test_n
+            class_concept_counts = self.df.groupby(['concept', 'class']).count()['index']
+            for concept in self.df['concept']:
+                for y_class in self.classes:
+                    subset_count = class_concept_counts[concept, y_class]
+                    if subset_count < full_sample_size:
+                        raise ValueError(f'Only {subset_count} instances available for '
+                                         f'class "{y_class}" in concept "{concept}", while the '
+                                         f'maximum number that may be sampled is the full '
+                                         f'train and test size: {full_sample_size}')
+
+    @property
+    def train_n(self) -> int:
+        return self._train_n
+
     @property
     def concepts(self) -> Concepts:
         return sorted(self.df['concept'].unique())
@@ -101,11 +139,42 @@ class Dataset():
                                 for concept in component.concepts}
         return self.df['concept'].map(concept_to_component).to_numpy()
 
-    def subset(self, subset_df: pd.DataFrame) -> 'Dataset':
-        # Don't use the constructor, otherwise we'd reset df.index.
-        subdataset = deepcopy(self)
-        subdataset.df = subset_df
-        return subdataset
+
+class SamplesDataset(Dataset):
+    """A Dataset that is comprised of many samples with presumed dataset
+    shift between samples."""
+
+    def __init__(self,
+                 df: pd.DataFrame, *,
+                 train_samples: Set[str],
+                 calib_size: float = 0.5,
+                 numeric_features: Optional[Set[str]] = None) -> None:
+        super().__init__(df, calib_size=calib_size, numeric_features=numeric_features)
+        self.train_samples = train_samples
+
+    @property
+    def test_samples(self):
+        if not hasattr(self, '_test_samples'):
+            unique_samples = set(self.df['sample'].unique())
+            self._test_samples = list(sorted(unique_samples - self.train_samples))
+        return self._test_samples
+
+    @property
+    def train_n(self):
+        return self.get_train_index().shape[0]
+
+    def get_train_index(self) -> np.ndarray:
+        return self.df[self.df['sample'].isin(self.train_samples)].index.to_numpy()
+
+    def get_test_index(self, sample_idx: int) -> np.ndarray:
+        return self.df[self.df['sample'] == self.test_samples[sample_idx]].index.to_numpy()
+
+    def subset(self, subset_df: pd.DataFrame) -> 'SamplesDataset':
+        new_dataset = cast(SamplesDataset, super().subset(subset_df))
+        # Clear cached computed variable
+        if hasattr(new_dataset, '_test_samples'):
+            del new_dataset._test_samples
+        return new_dataset
 
 
 # Downloading / Caching
@@ -123,7 +192,10 @@ def cache_file_locally(local_path: str, remote_url: str) -> None:
     to local_url."""
     if os.path.isfile(local_path):
         return
-    r = requests.get(remote_url, verify=True)
+    try:
+        r = requests.get(remote_url, verify=True)
+    except Exception as ex:
+        raise Exception(f'Failed to download: {remote_url}') from ex
     with open(local_path, 'wb') as f:
         f.write(r.content)
 
@@ -156,7 +228,7 @@ def cache_computation(local_path: str, func: Callable) -> Any:
 # * Returns a Dataset containing a DataFrame and metadata.
 # * Stores the target feature for classification in a 'class' column.
 
-def arabic_digits_dataset(train_n: int = 330, test_n: int = 110) -> Dataset:
+def arabic_digits_dataset(train_n: int = 330, test_n: int = 110) -> ConceptsDataset:
     # NOTE: It appears that this dataset contains 107 duplicate
     # rows. These have been left in to maintain consistency with other
     # usage of the dataset (https://doi.org/10.1145/3219819.3220059).
@@ -209,7 +281,7 @@ def arabic_digits_dataset(train_n: int = 330, test_n: int = 110) -> Dataset:
 
     train_df = file_to_df(train_local_file, chunk_size=330)
     test_df = file_to_df(test_local_file, chunk_size=110)
-    return Dataset(
+    return ConceptsDataset(
         df=pd.concat([train_df, test_df]),
         train_n=train_n,
         test_n=test_n,
@@ -217,13 +289,13 @@ def arabic_digits_dataset(train_n: int = 330, test_n: int = 110) -> Dataset:
     )
 
 
-def insect_species_dataset(train_n: int = 1500, test_n: int = 500) -> Dataset:
+def insect_species_dataset(train_n: int = 1500, test_n: int = 500) -> ConceptsDataset:
     local_file = cache_path('insect_species.csv')
     cache_file_locally(local_file, 'https://raw.githubusercontent.com/denismr/Unsupervised-Context-Switch-For-Classification-Tasks/master/data/AedesQuinx.csv')
     df = pd.read_csv(local_file, sep=',', index_col=False)
     df = df.rename(columns={'species': 'class',
                             'temp_range': 'concept'})
-    return Dataset(
+    return ConceptsDataset(
         df=df,
         train_n=train_n,
         test_n=test_n,
@@ -231,13 +303,13 @@ def insect_species_dataset(train_n: int = 1500, test_n: int = 500) -> Dataset:
     )
 
 
-def insect_sex_dataset(train_n: int = 1500, test_n: int = 500) -> Dataset:
+def insect_sex_dataset(train_n: int = 1500, test_n: int = 500) -> ConceptsDataset:
     local_file = cache_path('insect_sex.csv')
     cache_file_locally(local_file, 'https://raw.githubusercontent.com/denismr/Unsupervised-Context-Switch-For-Classification-Tasks/master/data/AedesSex.csv')
     df = pd.read_csv(local_file, sep=',', index_col=False)
     df = df.rename(columns={'sex': 'class',
                             'temp_range': 'concept'})
-    return Dataset(
+    return ConceptsDataset(
         df=df,
         train_n=train_n,
         test_n=test_n,
@@ -247,7 +319,7 @@ def insect_sex_dataset(train_n: int = 1500, test_n: int = 500) -> Dataset:
 
 def handwritten_letters_dataset(*,
                                 letter_target: Optional[bool] = None,
-                                author_target: Optional[bool] = None) -> Dataset:
+                                author_target: Optional[bool] = None) -> ConceptsDataset:
     if letter_target:
         concept, target = 'author', 'letter'
     elif author_target:
@@ -260,12 +332,217 @@ def handwritten_letters_dataset(*,
     df = pd.read_csv(local_file, sep=',', index_col=False)
     df = df.rename(columns={target: 'class',
                             concept: 'concept'})
-    return Dataset(
+    return ConceptsDataset(
         df=df,
         train_n=135,
         test_n=45,
         numeric_features=(set(df.columns) - {'class', 'concept'}),
     )
+
+
+# DATASETS WITH SHIFT
+
+def plankton_dataset(target_class: str = 'auto',
+                     real_samples: bool = True) -> Dataset:
+    """Based on dataset pre-processing of: https://github.com/pglez82/IFCB_quantification
+
+    See: González, P., Castano, A., Peacock, E. E., Díez, J., Del Coz,
+    J. J., & Sosik, H. M. (2019). Automatic plankton quantification
+    using deep features. Journal of Plankton Research, 41(4), 449-463."""
+    git_commit = 'f8feb19c72df391ea6972fdab09994b0f4b3cdab'
+    plankton_dir = cache_path('plankton')
+    if not os.path.isdir(plankton_dir):
+        os.mkdir(plankton_dir)
+
+    # Load set of samples considered to have complete data.
+    local_samples_file = os.path.join(plankton_dir, 'FULLY_ANNOTATED.RData')
+    cache_file_locally(local_samples_file, f'https://raw.githubusercontent.com/pglez82/IFCB_quantification/{git_commit}/FULLY_ANNOTATED.RData')
+    complete_samples_series = read_r(local_samples_file)[None]['Sample']
+
+    def load_classes_df():
+        """Constructs a DataFrame of instance rows (identified by sample +
+        roi) with associated auto_class values."""
+        # Load mapping of "original class" to "auto class"
+        local_classmap_file = os.path.join(plankton_dir, 'classmap.csv')
+        cache_file_locally(local_classmap_file, f'https://raw.githubusercontent.com/pglez82/IFCB_quantification/{git_commit}/classes.csv')
+        classmap_df = pd.read_csv(local_classmap_file)
+        manual_to_auto_class = pd.Series(classmap_df['Auto class'].values, index=classmap_df['Current Manual Class']).to_dict()
+
+        # See:
+        # * https://darchive.mblwhoilibrary.org/handle/1912/7341
+        # * https://github.com/hsosik/WHOI-Plankton
+        annual_image_set_urls = {
+            '2006': 'https://darchive.mblwhoilibrary.org/bitstream/handle/1912/7342/2006.zip?sequence=1&isAllowed=y',
+            '2007': 'https://darchive.mblwhoilibrary.org/bitstream/handle/1912/7343/2007.zip?sequence=1&isAllowed=y',
+            '2008': 'https://darchive.mblwhoilibrary.org/bitstream/handle/1912/7345/2008.zip?sequence=1&isAllowed=y',
+            '2009': 'https://darchive.mblwhoilibrary.org/bitstream/handle/1912/7346/2009.zip?sequence=1&isAllowed=y',
+            '2010': 'https://darchive.mblwhoilibrary.org/bitstream/handle/1912/7348/2010.zip?sequence=1&isAllowed=y',
+            '2011': 'https://darchive.mblwhoilibrary.org/bitstream/handle/1912/7347/2011.zip?sequence=1&isAllowed=y',
+            '2012': 'https://darchive.mblwhoilibrary.org/bitstream/handle/1912/7344/2012.zip?sequence=1&isAllowed=y',
+            '2013': 'https://darchive.mblwhoilibrary.org/bitstream/handle/1912/7349/2013.zip?sequence=1&isAllowed=y',
+            '2014': 'https://darchive.mblwhoilibrary.org/bitstream/handle/1912/7350/2014.zip?sequence=1&isAllowed=y',
+        }
+        raw_dfs = []
+        for year, url in annual_image_set_urls.items():
+            local_year_file = os.path.join(plankton_dir, f'images_{year}.zip')
+            cache_file_locally(local_year_file, url)
+            with ZipFile(local_year_file) as zip_file:
+                raw_dfs.append(pd.DataFrame([
+                    filepath.split('/') for filepath in zip_file.namelist()
+                    if filepath.endswith('.png')
+                ], columns=['year', 'original_class', 'image']))
+        df = pd.concat(raw_dfs)
+
+        assert (df['image'].str.len() == 31).all()  # E.g. 'IFCB1_2006_270_170728_01626.png'
+        df['sample'] = df['image'].str.slice(0, 21)  # E.g. 'IFCB1_2006_270_170728'
+        df['roi_number'] = df['image'].str.slice(22, 27)  # E.g. '01626'
+        del df['image']
+
+        df['auto_class'] = df['original_class'].map(manual_to_auto_class)
+        assert not df['auto_class'].isna().any()
+
+        # Limit to complete samples.
+        df = df[df['sample'].isin(complete_samples_series)]
+
+        return df
+
+    def load_full_df(classes_df):
+        """Constructs a DataFrame with pre-computed features for each row
+        (identified by sample + roi)."""
+        # See: https://ifcb-data.whoi.edu/timeline
+        sample_features_dir = os.path.join(plankton_dir, 'sample_features')
+        if not os.path.isdir(sample_features_dir):
+            os.mkdir(sample_features_dir)
+
+        # Download features file for each sample.
+        features_dfs = []
+        for i, sample in enumerate(complete_samples_series, start=1):
+            print(f'Processing sample {i}/{complete_samples_series.shape[0]} ({datetime.now()})')
+            sample_features_filename = f'{sample}_features.csv'
+            sample_features_file = os.path.join(sample_features_dir, sample_features_filename)
+            cache_file_locally(sample_features_file, f'https://ifcb-data.whoi.edu/mvco/{sample_features_filename}')
+            sample_features_df = pd.read_csv(sample_features_file)
+            sample_features_df['sample'] = sample
+            # Erasing this feature as it is present for some samples and not others.
+            if 'summedBiovolume' in sample_features_df.columns:
+                del sample_features_df['summedBiovolume']
+            features_dfs.append(sample_features_df)
+        features_df = pd.concat(features_dfs)
+
+        # Merge classes with features, keeping any rows of features
+        # that do not have a corresponding class.
+        df = features_df.merge(classes_df, how='left', on=['sample', 'roi_number'])
+
+        # Load table mapping low-level classes to high-level functional groups
+        local_fg_file = os.path.join(plankton_dir, 'functional_groups.csv')
+        cache_file_locally(local_fg_file, f'https://raw.githubusercontent.com/pglez82/IFCB_quantification/{git_commit}/functional_groups.csv')
+        fg_df = pd.read_csv(local_fg_file)
+        manual_to_fg_class = pd.Series(fg_df['GrupoFinal'].values, index=fg_df['Nombre Carpeta']).to_dict()
+        df['fg_class'] = df['original_class'].map(manual_to_fg_class)
+
+        return df
+
+    full_df_file = os.path.join(plankton_dir, 'full_df.joblib')
+    if not os.path.isfile(full_df_file):
+        classes_df_file = os.path.join(plankton_dir, 'classes_df.csv')
+        if not os.path.isfile(classes_df_file):
+            classes_df = load_classes_df()
+            classes_df.to_csv(classes_df_file, index=False)
+        classes_df = pd.read_csv(classes_df_file)
+        full_df = load_full_df(classes_df)
+        dump(full_df, full_df_file)
+    full_df = load(full_df_file)
+
+    numeric_features = set([
+        'Area_over_Perimeter',
+        'Area_over_PerimeterSquared', 'BoundingBox_xwidth',
+        'BoundingBox_ywidth', 'ConvexPerimeter', 'Eccentricity',
+        'EquivDiameter', 'Extent', 'FeretDiameter', 'H180', 'H90',
+        'H90_over_H180', 'H90_over_Hflip', 'HOG01', 'HOG02', 'HOG03',
+        'HOG04', 'HOG05', 'HOG06', 'HOG07', 'HOG08', 'HOG09', 'HOG10',
+        'HOG11', 'HOG12', 'HOG13', 'HOG14', 'HOG15', 'HOG16', 'HOG17',
+        'HOG18', 'HOG19', 'HOG20', 'HOG21', 'HOG22', 'HOG23', 'HOG24',
+        'HOG25', 'HOG26', 'HOG27', 'HOG28', 'HOG29', 'HOG30', 'HOG31',
+        'HOG32', 'HOG33', 'HOG34', 'HOG35', 'HOG36', 'HOG37', 'HOG38',
+        'HOG39', 'HOG40', 'HOG41', 'HOG42', 'HOG43', 'HOG44', 'HOG45',
+        'HOG46', 'HOG47', 'HOG48', 'HOG49', 'HOG50', 'HOG51', 'HOG52',
+        'HOG53', 'HOG54', 'HOG55', 'HOG56', 'HOG57', 'HOG58', 'HOG59',
+        'HOG60', 'HOG61', 'HOG62', 'HOG63', 'HOG64', 'HOG65', 'HOG66',
+        'HOG67', 'HOG68', 'HOG69', 'HOG70', 'HOG71', 'HOG72', 'HOG73',
+        'HOG74', 'HOG75', 'HOG76', 'HOG77', 'HOG78', 'HOG79', 'HOG80',
+        'HOG81', 'Hflip', 'Hflip_over_H180', 'Orientation',
+        'RWcenter2total_powerratio', 'RWhalfpowerintegral', 'Ring01',
+        'Ring02', 'Ring03', 'Ring04', 'Ring05', 'Ring06', 'Ring07',
+        'Ring08', 'Ring09', 'Ring10', 'Ring11', 'Ring12', 'Ring13',
+        'Ring14', 'Ring15', 'Ring16', 'Ring17', 'Ring18', 'Ring19',
+        'Ring20', 'Ring21', 'Ring22', 'Ring23', 'Ring24', 'Ring25',
+        'Ring26', 'Ring27', 'Ring28', 'Ring29', 'Ring30', 'Ring31',
+        'Ring32', 'Ring33', 'Ring34', 'Ring35', 'Ring36', 'Ring37',
+        'Ring38', 'Ring39', 'Ring40', 'Ring41', 'Ring42', 'Ring43',
+        'Ring44', 'Ring45', 'Ring46', 'Ring47', 'Ring48', 'Ring49',
+        'Ring50', 'RotatedArea', 'RotatedBoundingBox_xwidth',
+        'RotatedBoundingBox_ywidth', 'Solidity', 'Wedge01', 'Wedge02',
+        'Wedge03', 'Wedge04', 'Wedge05', 'Wedge06', 'Wedge07',
+        'Wedge08', 'Wedge09', 'Wedge10', 'Wedge11', 'Wedge12',
+        'Wedge13', 'Wedge14', 'Wedge15', 'Wedge16', 'Wedge17',
+        'Wedge18', 'Wedge19', 'Wedge20', 'Wedge21', 'Wedge22',
+        'Wedge23', 'Wedge24', 'Wedge25', 'Wedge26', 'Wedge27',
+        'Wedge28', 'Wedge29', 'Wedge30', 'Wedge31', 'Wedge32',
+        'Wedge33', 'Wedge34', 'Wedge35', 'Wedge36', 'Wedge37',
+        'Wedge38', 'Wedge39', 'Wedge40', 'Wedge41', 'Wedge42',
+        'Wedge43', 'Wedge44', 'Wedge45', 'Wedge46', 'Wedge47',
+        'Wedge48', 'moment_invariant1', 'moment_invariant2',
+        'moment_invariant3', 'moment_invariant4', 'moment_invariant5',
+        'moment_invariant6', 'moment_invariant7', 'numBlobs',
+        'rotated_BoundingBox_solidity', 'shapehist_kurtosis_normEqD',
+        'shapehist_mean_normEqD', 'shapehist_median_normEqD',
+        'shapehist_mode_normEqD', 'shapehist_skewness_normEqD',
+        'summedArea', 'summedConvexArea', 'summedConvexPerimeter',
+        'summedConvexPerimeter_over_Perimeter', 'summedFeretDiameter',
+        'summedMajorAxisLength', 'summedMinorAxisLength',
+        'summedPerimeter', 'texture_average_contrast',
+        'texture_average_gray_level', 'texture_entropy',
+        'texture_smoothness', 'texture_third_moment',
+        'texture_uniformity',
+    ])
+
+    if target_class == 'auto':
+        # If manually-labelled images were not present for a given
+        # row, set it's class to 'na'
+        full_df['class'] = full_df['auto_class'].fillna('na')
+        # Remove classes that only appear once (not enough for train/calib split).
+        full_df = full_df[~full_df['class'].isin(['Gonyaulax'])]
+    elif target_class == 'functional_group':
+        full_df['class'] = full_df['fg_class'].fillna('Other')
+    elif target_class == 'binary':
+        full_df['class'] = full_df['auto_class'].where(full_df['auto_class'] == 'mix', 'other')
+    else:
+        raise ValueError(f'Unrecognised target_class: {target_class}')
+
+    # Replace feature nans with zero
+    full_df.fillna(0, inplace=True)
+    # Replace infinite values with the min/max values in each column.
+    for feature in ['H90_over_Hflip']:
+        non_inf_values = full_df[feature][~np.isinf(full_df[feature])]
+        full_df[feature].replace(np.inf, non_inf_values.max(), inplace=True)
+        full_df[feature].replace(-np.inf, non_inf_values.min(), inplace=True)
+    assert np.isinf(full_df[numeric_features]).sum().sum() == 0
+
+    if real_samples:
+        return SamplesDataset(
+            full_df,
+            # First 200 samples are used for training.
+            train_samples=set(complete_samples_series.iloc[:200]),
+            numeric_features=numeric_features,
+        )
+    else:
+        full_df['concept'] = pd.Series('na', index=full_df.index)
+        return ConceptsDataset(
+            full_df,
+            train_n=10_000,
+            test_n=1_000,
+            numeric_features=numeric_features,
+        )
 
 
 def named_datasets(datasets: Mapping[str, Callable[[], Dataset]]) -> Mapping[str, Callable[[], Dataset]]:
@@ -298,4 +575,7 @@ DATASETS = named_datasets({
     'insect-sex_smallest': partial(insect_sex_dataset, test_n=50),
     'handwritten-letters-letter': partial(handwritten_letters_dataset, letter_target=True),
     'handwritten-letters-author': partial(handwritten_letters_dataset, author_target=True),
+    'plankton': partial(plankton_dataset, target_class='auto'),
+    'binary-plankton': partial(plankton_dataset, target_class='binary'),
+    'fg-plankton': partial(plankton_dataset, target_class='functional_group'),
 })

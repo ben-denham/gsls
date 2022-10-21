@@ -11,6 +11,12 @@ setup(
         'numpy==1.20.0',
         'pandas==1.2.4',
         'requests==2.24.0',
+        'pyreadr==0.4.4',
+        'seaborn==0.11.2',
+        'statsmodels==0.12.0',
+        'cvxpy==1.2.1',
+        'xpress==8.14.0',
+        'orange3==3.29.3',
     ],
     extras_require={
         # Best practice to list non-essential dev dependencies here.

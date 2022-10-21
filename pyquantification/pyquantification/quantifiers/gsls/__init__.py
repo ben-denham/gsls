@@ -80,6 +80,11 @@ class GslsQuantifier(Quantifier):
             b_scaled_hist = mixture_hist - a_scaled_hist
             # Scale b_hist to have sum 1.
             b_hist = b_scaled_hist / b_weight
+            # The fitting of a_weight should make the minimum value in
+            # b_hist equal zero, but precision issues can result in
+            # negative values, so we clip to zero and re-normalise.
+            b_hist = np.maximum(0, b_hist)
+            b_hist = b_hist / b_hist.sum()
         return b_hist, b_weight
 
     @classmethod
@@ -121,18 +126,43 @@ class GslsQuantifier(Quantifier):
             source_mean = np.sum(target_class_probs) * source_scale
             source_var = np.sum(target_class_probs * (1 - target_class_probs)) * source_scale**2
 
-            # Because the scaling means we cannot use a discrete
-            # Poisson Binomial PMF, we approximate with a Gaussian
-            # distribution.
-            source_pmf = scipy.stats.norm.pdf(
-                x=np.arange(source_n + 1),
-                loc=source_mean,
-                scale=np.sqrt(source_var),
-            )
-            # As the Gaussian distribution may extend past the range
-            # of source_pmf, we normalise it (giving a truncated
-            # Gaussian distribution).
-            source_pmf = source_pmf / source_pmf.sum()
+            if source_var == 0:
+                # If source_var == 0, we cannot estimate a normal
+                # distribution. However, all target_class_probs must
+                # be either 1 or 0, so there is 100% probability on
+                # the mean count.
+                source_mean_count = int(np.round(source_mean))
+                source_pmf = np.zeros(source_n + 1)
+                source_pmf[source_mean_count] = 1.0
+            else:
+                # Because the scaling means we cannot use a discrete
+                # Poisson Binomial PMF, we approximate with a Gaussian
+                # distribution.
+                source_pmf = scipy.stats.norm.pdf(
+                    x=np.arange(source_n + 1),
+                    loc=source_mean,
+                    scale=np.sqrt(source_var),
+                )
+                # As the Gaussian distribution may extend past the range
+                # of source_pmf, we normalise it (giving a truncated
+                # Gaussian distribution).
+                source_pmf_sum = source_pmf.sum()
+                if source_pmf_sum > 0:
+                    source_pmf = source_pmf / source_pmf_sum
+                else:
+                    # In cases of very low variance the pmf may contain
+                    # only zeros, so we construct a pmf assigns all
+                    # probability to the subsequent counts on either side
+                    # of the mean (weighted according to the position of
+                    # the mean between the two points).
+                    lower_mean_count = int(np.floor(source_mean))
+                    upper_mean_count = int(np.ceil(source_mean))
+                    # The higher source_mean is, the higher the
+                    # probability of the upper_mean_count
+                    source_pmf[upper_mean_count] = (source_mean - lower_mean_count)
+                    # The lower_mean_count probability is complementary to
+                    # give a sum of 1.
+                    source_pmf[lower_mean_count] = 1 - source_pmf[upper_mean_count]
 
         # Remain distribution (Source - Loss)
         if loss_n == 0:
@@ -150,12 +180,12 @@ class GslsQuantifier(Quantifier):
                 loss_probs = scipy.stats.beta.pdf(
                     x=loss_pos_ns,
                     a=1,
-                    b=(class_count - 1),
+                    b=1,
                     scale=loss_n
                 )
                 if loss_probs.sum() == 0:
                     # If beta.pdf returns probs so small they can only
-                    # be represented as zero (e.g. when class_count=3
+                    # be represented as zero (e.g. if b=2
                     # and loss_pos_ns=[loss_n]), we will use a uniform
                     # distribution.
                     loss_probs = np.full(loss_probs.shape[0],
@@ -173,7 +203,7 @@ class GslsQuantifier(Quantifier):
             gain_pmf = scipy.stats.beta.pdf(
                 x=np.arange(gain_n + 1),
                 a=1,
-                b=(class_count - 1),
+                b=1,
                 scale=gain_n,
             )
             # Normalise PDF to a PMF.
@@ -184,12 +214,9 @@ class GslsQuantifier(Quantifier):
         assert len(target_cdf) == full_n + 1
         interval = interval_for_cdf(target_cdf, interval_mass)
         return PredictionInterval(
-            # Prediction is the mean of the maximum points in the PMF.
-            prediction=cast(float, np.mean(
-                # Treat any point very close to the maximum as a
-                # maximum point (to account for very small differences
-                # in probabilities).
-                np.argwhere(target_pmf >= np.amax(target_pmf))
+            # Prediction is the expected value (mean) of the target_pmf
+            prediction=cast(float, np.sum(
+                target_pmf * np.arange(target_pmf.shape[0])
             )),
             lower=interval.lower,
             upper=interval.upper,
@@ -248,6 +275,9 @@ class GslsQuantifier(Quantifier):
                 # Create equiprobable bins based on the calib probs
                 # (may give fewer than hist_bins).
                 _, bin_edges = pd.qcut(calib_class_probs, hist_bins, retbins=True, duplicates='drop')
+                # If all probs are equal, only a single bin edge is returned
+                if len(bin_edges) == 1:
+                    bin_edges = np.array([0, 1])
                 # Ensure all bin_edges are in the range [0, 1], and
                 # that the first and last bin edges are 0 and 1
                 # respectively. For np.histogram, this final edge will
@@ -296,6 +326,9 @@ class GslsQuantifier(Quantifier):
                 'loss_weight': loss_weight,
                 'gain_weight': gain_weight,
                 'bins': hist_bins,
+                'bin_edges': bin_edges,
+                'target_hist': target_hist,
+                'gain_hist': gain_hist,
             }
         return quantifications
 

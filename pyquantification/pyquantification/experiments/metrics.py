@@ -39,8 +39,26 @@ def interval_width_series(df: pd.DataFrame, method: str) -> pd.Series:
     return width_series.where((df['test_n'] > 0), np.nan)
 
 
+def discrepancy_series(df: pd.DataFrame, method: str) -> pd.Series:
+    """We define the discrepancy of a prediction interval as (absolute
+    difference between interval midpoint and the true value) divided
+    by (half the interval width).
+
+    Inspired by the discrepancy ratio of:
+    https://bmcmedresmethodol.biomedcentral.com/articles/10.1186/1471-2288-5-21
+
+    """
+    interval_mid_points = ((df[f'{method}_count_upper'] + df[f'{method}_count_lower']) / 2)
+    interval_mid_errors = np.abs(interval_mid_points - df['test_true_count'])
+    half_interval_widths = (df[f'{method}_count_upper'] - df[f'{method}_count_lower']) / 2
+    return interval_mid_errors / half_interval_widths
+
+
 def prepare_results(df: pd.DataFrame) -> pd.DataFrame:
     """Metric pre-computation for a results DataFrame."""
+    if df.empty:
+        return df
+
     new_cols = {
         'single_grouping': 'single_grouping',
         'remain_weight': ((1 - df['loss_weight']) * (1 - df['gain_weight']))  # type: ignore
@@ -56,6 +74,7 @@ def prepare_results(df: pd.DataFrame) -> pd.DataFrame:
         new_cols[f'{method}_coverage'] = coverage_series(df, method)
         new_cols[f'{method}_absolute_error'] = absolute_error_series(df, method)
         new_cols[f'{method}_width'] = interval_width_series(df, method)
+        new_cols[f'{method}_discrepancy'] = discrepancy_series(df, method)
         if f'{method}_loss_weight' in df.columns:
             new_cols[f'{method}_remain_weight'] = (
                 (1 - df[f'{method}_loss_weight']) *  # type: ignore

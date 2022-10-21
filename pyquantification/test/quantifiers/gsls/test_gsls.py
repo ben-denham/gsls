@@ -76,7 +76,7 @@ def test_get_gsls_interval() -> None:
         class_count=3,
         interval_mass=0.8,
     )
-    assert interval1.prediction == 20.0
+    np.testing.assert_almost_equal(interval1.prediction, 20.0000030)
     assert interval1.lower == 15
     assert interval1.upper == 25
     interval2 = GslsQuantifier.get_gsls_interval(
@@ -86,9 +86,9 @@ def test_get_gsls_interval() -> None:
         class_count=3,
         interval_mass=0.8,
     )
-    assert interval2.prediction == 13.0
-    assert interval2.lower == 9
-    assert interval2.upper == 48
+    np.testing.assert_almost_equal(interval2.prediction, 35.3905242)
+    assert interval2.lower == 11
+    assert interval2.upper == 60
     interval3 = GslsQuantifier.get_gsls_interval(
         loss_weight=1.0,
         gain_weight=0.6,
@@ -96,9 +96,9 @@ def test_get_gsls_interval() -> None:
         class_count=3,
         interval_mass=0.8,
     )
-    assert interval3.prediction == 0.0
-    assert interval3.lower == 5
-    assert interval3.upper == 68
+    np.testing.assert_almost_equal(interval3.prediction, 50.0)
+    assert interval3.lower == 10
+    assert interval3.upper == 90
     interval4 = GslsQuantifier.get_gsls_interval(
         loss_weight=0.6,
         gain_weight=1.0,
@@ -106,9 +106,9 @@ def test_get_gsls_interval() -> None:
         class_count=3,
         interval_mass=0.8,
     )
-    assert interval4.prediction == 0.0
-    assert interval4.lower == 5
-    assert interval4.upper == 68
+    np.testing.assert_almost_equal(interval4.prediction, 50.0)
+    assert interval4.lower == 10
+    assert interval4.upper == 90
 
 
 def test_get_auto_hist_bins() -> None:
@@ -142,24 +142,83 @@ def test_gsls_quantify() -> None:
         true_weights={'loss': 0.5, 'gain': 0.5},
         random_state=2,
     )
-    assert intervals['a'].prediction == 11.0
-    assert intervals['a'].lower == 12
-    assert intervals['a'].upper == 59
+    np.testing.assert_almost_equal(intervals['a'].prediction, 45.7154284)
+    assert intervals['a'].lower == 16
+    assert intervals['a'].upper == 76
     assert intervals['a'].stats['loss_weight'] == 0.0
     assert intervals['a'].stats['gain_weight'] == 0.74
     assert intervals['a'].stats['bins'] == 13
-    assert intervals['b'].prediction == 22.0
-    assert intervals['b'].lower == 19
-    assert intervals['b'].upper == 65
+    np.testing.assert_array_almost_equal(
+        intervals['a'].stats['bin_edges'],
+        [0.0, 0.070382, 0.117044, 0.142233, 0.163727, 0.17854,
+         0.198875, 0.211378, 0.228507, 0.244196, 0.261838, 0.284858,
+         0.317592, 1.0],
+    )
+    np.testing.assert_array_almost_equal(
+        intervals['a'].stats['target_hist'],
+        [0.05, 0.02, 0.04, 0.07, 0.02, 0.02, 0.02, 0.03, 0.05, 0.02, 0.04, 0.13, 0.49],
+    )
+    np.testing.assert_almost_equal(np.sum(intervals['a'].stats['target_hist']), 1.0)
+    np.testing.assert_array_almost_equal(
+        intervals['a'].stats['gain_hist'],
+        [4.049978e-02, 3.492320e-06, 2.699161e-02, 6.751311e-02,
+         1.062428e-04, 1.923804e-04, 3.594886e-04, 1.348139e-02,
+         4.049557e-02, 4.686214e-18, 2.699109e-02, 1.485553e-01,
+         6.348105e-01],
+    )
+    np.testing.assert_almost_equal(np.sum(intervals['a'].stats['gain_hist']), 1.0)
+
+    np.testing.assert_almost_equal(intervals['b'].prediction, 49.6123272)
+    assert intervals['b'].lower == 21
+    assert intervals['b'].upper == 78
     assert intervals['b'].stats['loss_weight'] == 0.26
     assert intervals['b'].stats['gain_weight'] == 0.71
     assert intervals['b'].stats['bins'] == 13
-    assert intervals['c'].prediction == 3.0
-    assert intervals['c'].lower == 6
-    assert intervals['c'].upper == 65
+    np.testing.assert_array_almost_equal(
+        intervals['b'].stats['bin_edges'],
+        [0.0, 0.173559, 0.212064, 0.24176, 0.258613, 0.276012,
+         0.290162, 0.304967, 0.321542, 0.344741, 0.363878, 0.386814,
+         0.421558, 1.0],
+    )
+    np.testing.assert_array_almost_equal(
+        intervals['b'].stats['target_hist'],
+        [0.02, 0.0, 0.03, 0.0, 0.01, 0.03, 0.04, 0.03, 0.02, 0.06, 0.05, 0.09, 0.62],
+    )
+    np.testing.assert_almost_equal(np.sum(intervals['b'].stats['target_hist']), 1.0)
+    np.testing.assert_array_almost_equal(
+        intervals['b'].stats['gain_hist'],
+        [0.0, 0.0, 4.146989e-07, 0.0,
+         1.979034e-06, 1.840066e-08, 1.462502e-02, 4.618260e-07,
+         2.768588e-07, 4.223080e-02, 2.815500e-02, 8.446052e-02,
+         8.305255e-01],
+    )
+    np.testing.assert_almost_equal(np.sum(intervals['b'].stats['gain_hist']), 1.0)
+
+    np.testing.assert_almost_equal(intervals['c'].prediction, 47.6131842)
+    assert intervals['c'].lower == 10
+    assert intervals['c'].upper == 85
     assert intervals['c'].stats['loss_weight'] == 0.46
     assert intervals['c'].stats['gain_weight'] == 0.93
     assert intervals['c'].stats['bins'] == 13
+    np.testing.assert_array_almost_equal(
+        intervals['c'].stats['bin_edges'],
+        [0.0, 0.37487, 0.409594, 0.437714, 0.455062, 0.473455,
+         0.48891, 0.506762, 0.521039, 0.538711, 0.560365, 0.587568,
+         0.635713, 1.0],
+    )
+    np.testing.assert_array_almost_equal(
+        intervals['c'].stats['target_hist'],
+        [0.89, 0.04, 0.02, 0.01, 0.0, 0.01, 0.0, 0.02, 0.01, 0.0, 0.0, 0.0, 0.0],
+    )
+    np.testing.assert_almost_equal(np.sum(intervals['c'].stats['target_hist']), 1.0)
+    np.testing.assert_array_almost_equal(
+        intervals['c'].stats['gain_hist'],
+        [9.462338e-01, 3.225803e-02, 1.075315e-02, 6.413827e-08,
+         0.000000e+00, 2.068965e-06, 0.000000e+00, 1.075287e-02,
+         0.000000e+00, 0.000000e+00, 0.000000e+00, 0.000000e+00,
+         0.000000e+00],
+    )
+    np.testing.assert_almost_equal(np.sum(intervals['c'].stats['gain_hist']), 1.0)
 
 
 def test_true_weight_gsls_quantify() -> None:
@@ -187,21 +246,80 @@ def test_true_weight_gsls_quantify() -> None:
         true_weights={'loss': 0.5, 'gain': 0.5},
         random_state=2,
     )
-    assert intervals['a'].prediction == 34.0
-    assert intervals['a'].lower == 16
-    assert intervals['a'].upper == 57
+    np.testing.assert_almost_equal(intervals['a'].prediction, 41.7604394)
+    assert intervals['a'].lower == 18
+    assert intervals['a'].upper == 66
     assert intervals['a'].stats['loss_weight'] == 0.5
     assert intervals['a'].stats['gain_weight'] == 0.5
     assert intervals['a'].stats['bins'] == 13
-    assert intervals['b'].prediction == 49.0
-    assert intervals['b'].lower == 26
-    assert intervals['b'].upper == 70
+    np.testing.assert_array_almost_equal(
+        intervals['a'].stats['bin_edges'],
+        [0.0, 0.070382, 0.117044, 0.142233, 0.163727, 0.17854,
+         0.198875, 0.211378, 0.228507, 0.244196, 0.261838, 0.284858,
+         0.317592, 1.0],
+    )
+    np.testing.assert_array_almost_equal(
+        intervals['a'].stats['target_hist'],
+        [0.05, 0.02, 0.04, 0.07, 0.02, 0.02, 0.02, 0.03, 0.05, 0.02, 0.04, 0.13, 0.49],
+    )
+    np.testing.assert_almost_equal(np.sum(intervals['a'].stats['target_hist']), 1.0)
+    np.testing.assert_array_almost_equal(
+        intervals['a'].stats['gain_hist'],
+        [4.049978e-02, 3.492320e-06, 2.699161e-02, 6.751311e-02,
+         1.062428e-04, 1.923804e-04, 3.594886e-04, 1.348139e-02,
+         4.049557e-02, 4.686214e-18, 2.699109e-02, 1.485553e-01,
+         6.348105e-01],
+    )
+    np.testing.assert_almost_equal(np.sum(intervals['a'].stats['gain_hist']), 1.0)
+
+    np.testing.assert_almost_equal(intervals['b'].prediction, 49.5029836)
+    assert intervals['b'].lower == 22
+    assert intervals['b'].upper == 77
     assert intervals['b'].stats['loss_weight'] == 0.5
     assert intervals['b'].stats['gain_weight'] == 0.5
     assert intervals['b'].stats['bins'] == 13
-    assert intervals['c'].prediction == 19.0
-    assert intervals['c'].lower == 10
-    assert intervals['c'].upper == 45
+    np.testing.assert_array_almost_equal(
+        intervals['b'].stats['bin_edges'],
+        [0.0, 0.173559, 0.212064, 0.24176, 0.258613, 0.276012,
+         0.290162, 0.304967, 0.321542, 0.344741, 0.363878, 0.386814,
+         0.421558, 1.0],
+    )
+    np.testing.assert_array_almost_equal(
+        intervals['b'].stats['target_hist'],
+        [0.02, 0.0, 0.03, 0.0, 0.01, 0.03, 0.04, 0.03, 0.02, 0.06, 0.05, 0.09, 0.62],
+    )
+    np.testing.assert_almost_equal(np.sum(intervals['b'].stats['target_hist']), 1.0)
+    np.testing.assert_array_almost_equal(
+        intervals['b'].stats['gain_hist'],
+        [0.0, 0.0, 4.146989e-07, 0.0,
+         1.979034e-06, 1.840066e-08, 1.462502e-02, 4.618260e-07,
+         2.768588e-07, 4.223080e-02, 2.815500e-02, 8.446052e-02,
+         8.305255e-01],
+    )
+    np.testing.assert_almost_equal(np.sum(intervals['b'].stats['gain_hist']), 1.0)
+
+    np.testing.assert_almost_equal(intervals['c'].prediction, 33.736578)
+    assert intervals['c'].lower == 12
+    assert intervals['c'].upper == 55
     assert intervals['c'].stats['loss_weight'] == 0.5
     assert intervals['c'].stats['gain_weight'] == 0.5
     assert intervals['c'].stats['bins'] == 13
+    np.testing.assert_array_almost_equal(
+        intervals['c'].stats['bin_edges'],
+        [0.0, 0.37487, 0.409594, 0.437714, 0.455062, 0.473455,
+         0.48891, 0.506762, 0.521039, 0.538711, 0.560365, 0.587568,
+         0.635713, 1.0],
+    )
+    np.testing.assert_array_almost_equal(
+        intervals['c'].stats['target_hist'],
+        [0.89, 0.04, 0.02, 0.01, 0.0, 0.01, 0.0, 0.02, 0.01, 0.0, 0.0, 0.0, 0.0],
+    )
+    np.testing.assert_almost_equal(np.sum(intervals['c'].stats['target_hist']), 1.0)
+    np.testing.assert_array_almost_equal(
+        intervals['c'].stats['gain_hist'],
+        [9.462338e-01, 3.225803e-02, 1.075315e-02, 6.413827e-08,
+         0.000000e+00, 2.068965e-06, 0.000000e+00, 1.075287e-02,
+         0.000000e+00, 0.000000e+00, 0.000000e+00, 0.000000e+00,
+         0.000000e+00],
+    )
+    np.testing.assert_almost_equal(np.sum(intervals['c'].stats['gain_hist']), 1.0)
