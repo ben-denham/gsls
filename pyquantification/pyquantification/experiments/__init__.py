@@ -11,7 +11,7 @@ from typing import cast, Any, Union, Optional, Dict, Sequence, Tuple, List
 
 from pyquantification.utils import prefix_keys, dict_first
 from pyquantification.datasets import DATASETS, Dataset, ConceptsDataset, SamplesDataset
-from pyquantification.classifiers import CLASSIFIERS
+from pyquantification.classifiers import CLASSIFIERS, SourceProbClassifier
 from pyquantification.quantifiers import QUANTIFIERS
 from pyquantification.shift_tests import SHIFT_TESTERS
 from pyquantification.rejectors import REJECTORS
@@ -137,15 +137,23 @@ def execute_classification(dataset: Dataset, *,
     # Post-processing feature names can be retrieved with:
     # classifier.named_steps['all_features'].get_feature_names()
 
+    if isinstance(classifier, SourceProbClassifier):
+        # SourceProbClassifier needs access to all columns
+        calib_X = calib_dataset.df
+        rest_X = rest_dataset.df
+    else:
+        calib_X = calib_dataset.X
+        rest_X = rest_dataset.X
+
     clfs = {}
     clfs['uncalibrated'] = classifier
-    uncalibrated_calib_probs = clfs['uncalibrated'].predict_proba(calib_dataset.X)
+    uncalibrated_calib_probs = clfs['uncalibrated'].predict_proba(calib_X)
 
     clfs['sigmoid'] = PrefitCalibratedClassifier(base_estimator=clfs['uncalibrated'], method='sigmoid')
-    clfs['sigmoid'].fit(calib_dataset.X, calib_dataset.y, uncalibrated_calib_probs)
+    clfs['sigmoid'].fit(calib_X, calib_dataset.y, uncalibrated_calib_probs)
 
     clfs['isotonic'] = PrefitCalibratedClassifier(base_estimator=clfs['uncalibrated'], method='isotonic')
-    clfs['isotonic'].fit(calib_dataset.X, calib_dataset.y, uncalibrated_calib_probs)
+    clfs['isotonic'].fit(calib_X, calib_dataset.y, uncalibrated_calib_probs)
 
     classification_result = {
         'cache_key': cache_key,
@@ -157,8 +165,8 @@ def execute_classification(dataset: Dataset, *,
         },
         'probs': {
             calibration_method: {
-                'calib': apply_classifier(clf, calib_dataset.X),
-                'rest': apply_classifier(clf, rest_dataset.X),
+                'calib': apply_classifier(clf, calib_X),
+                'rest': apply_classifier(clf, rest_X),
             }
             for calibration_method, clf in clfs.items()
         },

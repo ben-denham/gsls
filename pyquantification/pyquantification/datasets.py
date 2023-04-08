@@ -10,7 +10,8 @@ import pandas as pd
 import requests
 import re
 from copy import deepcopy
-from typing import cast, Any, Callable, Optional, Mapping, Dict, Set, Sequence, NamedTuple
+import scipy.stats
+from typing import cast, Any, Callable, Optional, Mapping, Dict, Set, Sequence, NamedTuple, Tuple
 from joblib import dump, load
 from zipfile import ZipFile
 from pyreadr import read_r
@@ -545,6 +546,116 @@ def plankton_dataset(target_class: str = 'auto',
         )
 
 
+class SyntheticComponent(NamedTuple):
+    name: str
+    weight: float
+    class_prior: Sequence[float]
+    # Pairs of loc/mean and scale/std-dev for Gaussian distributions
+    class_conditional_dist_params: Sequence[Tuple[float, float]]
+
+    @property
+    def normalised_class_prior(self):
+        return np.array(self.class_prior) / np.sum(self.class_prior)
+
+    def get_x_probs(self, xs: pd.Series) -> pd.Series:
+        """
+        Return P(X) based on the class_conditional_dist_params P(X|Y):
+
+        P(X) = SUM P(Y) * P(X|Y) FORALL Y
+        """
+        x_probs = pd.Series(0.0, index=xs.index)
+        for class_weight, dist_params in zip(self.normalised_class_prior, self.class_conditional_dist_params):
+            class_x_probs = scipy.stats.norm.pdf(xs, loc=dist_params[0], scale=dist_params[1])
+            x_probs += class_weight * class_x_probs
+        return x_probs
+
+    def replace(self, **kwargs) -> 'SyntheticComponent':
+        return self._replace(**kwargs)
+
+
+def sample_synthetic_components(*, classes: Sequence[str], components: Sequence[SyntheticComponent], n: int, rng: np.random.RandomState) -> pd.DataFrame:
+    component_class_dfs = []
+
+    component_prior = np.array([component.weight for component in components])
+    component_prior = component_prior / np.sum(component_prior)
+
+    component_choices = rng.choice(len(components), size=n, replace=True, p=component_prior)
+    component_counts = np.bincount(component_choices)
+    for component, component_n in zip(components, component_counts):
+        component_class_choices = rng.choice(len(component.normalised_class_prior),
+                                             size=component_n, replace=True,
+                                             p=component.normalised_class_prior)
+        component_class_counts = np.bincount(component_class_choices)
+        for class_label, dist_params, component_class_n in zip(classes, component.class_conditional_dist_params, component_class_counts):
+            component_class_dfs.append(pd.DataFrame({
+                'component': component.name,
+                'class': class_label,
+                'x': rng.normal(loc=dist_params[0], scale=dist_params[1], size=component_class_n),
+            }))
+    full_df = pd.concat(component_class_dfs)
+    assert full_df.shape[0] == n
+    full_df = cast(pd.DataFrame, full_df.sample(frac=1, replace=False, random_state=rng).reset_index(drop=True))
+    return full_df
+
+
+def synthetic_true_prob_dataset(
+        *,
+        classes: Sequence[str],
+        source_components: Sequence[SyntheticComponent],
+        target_components: Sequence[SyntheticComponent],
+        sample_n: int = 100,
+        train_samples: int = 10,
+        test_samples: int = 1000,
+) -> Dataset:
+    for component in [*source_components, *target_components]:
+        assert len(component.class_prior) == len(classes)
+        assert len(component.class_conditional_dist_params) == len(classes)
+
+    rng = np.random.RandomState(DATASET_RANDOM_SEED)
+    source_df = sample_synthetic_components(classes=classes, components=source_components, n=(sample_n * train_samples), rng=rng)
+    source_df['dist'] = 'source'
+    target_df = sample_synthetic_components(classes=classes, components=target_components, n=(sample_n * test_samples), rng=rng)
+    target_df['dist'] = 'target'
+
+    dataset_df = pd.concat([source_df, target_df]).reset_index(drop=True)
+    sample_series = pd.Series([f'sample_{i}' for i in range(train_samples + test_samples)]).repeat(sample_n)
+    sample_series.index = dataset_df.index
+    dataset_df['sample'] = sample_series
+
+    # Compute the true source distribution probability for each class
+    # on every x: P^S(Y|X)
+    # P^S(Y|X) = SUM (P(C) * P^C(Y|X)) FORALL COMPONENTS C
+    # P^C(Y|X) = P^C(X|Y) * P^C(Y) / P^C(X)
+    # P^C(X) = SUM (P^C(Y) * P^C(X|Y)) FORALL CLASSES Y
+    source_component_prior = np.array([component.weight for component in source_components])
+    source_component_prior = source_component_prior / np.sum(source_component_prior)
+    class_prob_columns = [f'source_prob__{class_label}' for class_label in classes]
+    for class_idx, class_prob_column in enumerate(class_prob_columns):
+        dataset_df[class_prob_column] = pd.Series(0.0, index=dataset_df.index)
+        for component, component_weight in zip(source_components, source_component_prior):
+            dist_params = component.class_conditional_dist_params[class_idx]
+            # component_class_conditional_prob = P^C(X|Y)
+            component_class_conditional_probs = scipy.stats.norm.pdf(dataset_df['x'], loc=dist_params[0], scale=dist_params[1])
+            # component_y_prob = P^C(Y)
+            component_class_prob = component.normalised_class_prior[class_idx]
+            # component_x_probs = P^C(X)
+            component_x_probs = component.get_x_probs(dataset_df['x'])
+            # component_probs = P^C(Y|X)
+            component_probs = component_class_conditional_probs * component_class_prob / component_x_probs
+            # component_weight = P(C)
+            dataset_df[class_prob_column] += component_weight * component_probs
+
+    # Check sum of true prob columns is approximately 1 for each row.
+    assert ((dataset_df[class_prob_columns].sum(axis=1) - 1).abs() < (10**(-7))).all()
+
+    return SamplesDataset(
+        dataset_df,
+        # First samples are the source samples used for training.
+        train_samples=set([f'sample_{i}' for i in range(train_samples)]),
+        numeric_features=set(['x']),
+    )
+
+
 def named_datasets(datasets: Mapping[str, Callable[[], Dataset]]) -> Mapping[str, Callable[[], Dataset]]:
     """Given a dict of dataset names to dataset building functions, return
     an analogous dict where the dataset building function will set the
@@ -567,6 +678,39 @@ def named_datasets(datasets: Mapping[str, Callable[[], Dataset]]) -> Mapping[str
     }
 
 
+unshifted_component = SyntheticComponent(
+    name='unshifted',
+    weight=1,
+    class_prior=[0.5, 0.5],
+    class_conditional_dist_params=[
+        (0.2, 0.3),
+        (0.8, 0.3),
+    ],
+)
+prior_shifted_component = unshifted_component.replace(
+    name='prior_shifted',
+    class_prior=[0.25, 0.75],
+)
+loss_component = unshifted_component.replace(
+    name='loss',
+    weight=0.5,
+    class_prior=[1.0, 0.0],
+    class_conditional_dist_params=[
+        (-1.0, 0.3),
+        (0.8, 0.3),
+    ],
+)
+gain_component = unshifted_component.replace(
+    name='gain',
+    weight=0.5,
+    class_prior=[0.0, 1.0],
+    class_conditional_dist_params=[
+        (0.2, 0.3),
+        (2.0, 0.3),
+    ],
+)
+
+
 DATASETS = named_datasets({
     'arabic-digits': arabic_digits_dataset,
     'insect-species': insect_species_dataset,
@@ -578,4 +722,22 @@ DATASETS = named_datasets({
     'plankton': partial(plankton_dataset, target_class='auto'),
     'binary-plankton': partial(plankton_dataset, target_class='binary'),
     'fg-plankton': partial(plankton_dataset, target_class='functional_group'),
+    'synthetic-true-prob-no-shift': partial(
+        synthetic_true_prob_dataset,
+        classes=['a', 'b'],
+        source_components=[unshifted_component],
+        target_components=[unshifted_component],
+    ),
+    'synthetic-true-prob-prior-shift': partial(
+        synthetic_true_prob_dataset,
+        classes=['a', 'b'],
+        source_components=[unshifted_component],
+        target_components=[prior_shifted_component],
+    ),
+    'synthetic-true-prob-gsls-shift': partial(
+        synthetic_true_prob_dataset,
+        classes=['a', 'b'],
+        source_components=[unshifted_component, loss_component],
+        target_components=[unshifted_component, gain_component],
+    ),
 })

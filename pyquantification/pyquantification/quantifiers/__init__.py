@@ -5,6 +5,7 @@ from pyquantification.quantifiers.gsls import (
     GslsQuantifier,
     TrueWeightGslsQuantifier,
 )
+from pyquantification.quantifiers.bootstrap import EmBootstrapQuantifier
 
 QUANTIFIERS = {
     'count': CountQuantifier,
@@ -12,4 +13,5 @@ QUANTIFIERS = {
     'em': EmQuantifier,
     'gsls': GslsQuantifier,
     'true-weight-gsls': TrueWeightGslsQuantifier,
+    'em-bs': EmBootstrapQuantifier,
 }

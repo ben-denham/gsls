@@ -51,6 +51,10 @@ into Git bash, then you should be able to run this project on Windows.
 | [13_RejectionUnderSampleShift](http://localhost:9999/notebooks/13_RejectionUnderSampleShift.ipynb) | Comparison of rejection (constrained quantification) methods under sample (real-world) shift. |
 | [14_RejectionUnderSyntheticShift](http://localhost:9999/notebooks/14_RejectionUnderSyntheticShift.ipynb) | Comparison of rejection (constrained quantification) methods under synthetic (GSLS and prior) shift. |
 | [15_RejectionTables](http://localhost:9999/notebooks/15_RejectionTables.ipynb) | Generation of tables of rejection (constrained quantification) results presented in the paper from cached experiment outcomes. |
+| [16_SyntheticExample](http://localhost:9999/notebooks/16_) | Quantification tests with simple synthetic datasets. |
+| [17_BootstrapQuantificationUnderGslsShift](http://localhost:9999/notebooks/17_BootstrapQuantificationUnderGslsShift.ipynb) | Comparison of bootstrap quantification methods under GSLS shift. |
+| [18_BootstrapQuantificationUnderPriorShift](http://localhost:9999/notebooks/18_BootstrapQuantificationUnderPriorShift.ipynb) | Comparison of bootstrap quantification methods under prior shift. |
+| [19_BootstrapQuantificationUnderSampleShift](http://localhost:9999/notebooks/19_BootstrapQuantificationUnderSampleShift.ipynb) | Comparison of bootstrap quantification methods under sample (real-world) shift. |
 
 ### Linting
 

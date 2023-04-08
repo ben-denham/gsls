@@ -1,4 +1,5 @@
 import numpy as np
+import pandas as pd
 from sklearn.linear_model import LogisticRegression
 from sklearn.base import ClassifierMixin
 from sklearn.pipeline import Pipeline
@@ -48,6 +49,22 @@ def logreg_classifier(dataset: Dataset) -> ClassifierMixin:
     return model
 
 
+class SourceProbClassifier(ClassifierMixin):
+    """Uses pre-calculated source probabilities from the dataset."""
+
+    def __init__(self, dataset: Dataset):
+        self.dataset = dataset
+        self.classes_ = np.array(dataset.classes)
+
+    def fit(self, X: pd.DataFrame, y: pd.Series) -> None:
+        pass
+
+    def predict_proba(self, X: pd.DataFrame) -> np.ndarray:
+        prob_columns = [f'source_prob__{class_label}' for class_label in self.classes_]
+        return X[prob_columns].to_numpy()
+
+
 CLASSIFIERS = {
     'logreg': logreg_classifier,
+    'source-prob': SourceProbClassifier,
 }
