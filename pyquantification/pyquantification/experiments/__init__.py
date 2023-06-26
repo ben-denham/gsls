@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 from time import process_time_ns
 from sklearn.base import ClassifierMixin
+from sklearn.metrics import brier_score_loss
 from typing import cast, Any, Union, Optional, Dict, Sequence, Tuple, List
 
 from pyquantification.utils import prefix_keys, dict_first
@@ -400,6 +401,13 @@ def quantification_shared_precomputation(dataset: Dataset, *,
                          for y_class in classes}
             for sample_key, class_counts in sample_class_counts.items()
         },
+        'class_brier_scores': {
+            y_class: brier_score_loss(
+                y_true=(test_dataset.y == y_class),
+                y_prob=test_probs[:, y_index],
+            )
+            for y_index, y_class in enumerate(classes)
+        },
     }
 
 
@@ -430,6 +438,7 @@ def execute_quantification(*,
         'concepts': shared_precomputation['concepts'],
         'class_priors': shared_precomputation['class_priors'],
         'class_counts': shared_precomputation['class_counts'],
+        'class_brier_scores': shared_precomputation['class_brier_scores'],
         'time_ns': stop_time_ns - start_time_ns,
         'class_intervals': {
             y_class: {
@@ -469,6 +478,7 @@ def execute_shift_test(*,
         'concepts': shared_precomputation['concepts'],
         'class_priors': shared_precomputation['class_priors'],
         'class_counts': shared_precomputation['class_counts'],
+        'class_brier_scores': shared_precomputation['class_brier_scores'],
         'time_ns': stop_time_ns - start_time_ns,
         'class_results': {
             y_class: {
@@ -506,6 +516,7 @@ def execute_rejector(*,
         'concepts': shared_precomputation['concepts'],
         'class_priors': shared_precomputation['class_priors'],
         'class_counts': shared_precomputation['class_counts'],
+        'class_brier_scores': shared_precomputation['class_brier_scores'],
         'rejected_indexes': result.rejected_indexes,
         'post_class_intervals': {
             y_class: {
@@ -594,6 +605,7 @@ def run_quantifications(*, classes: np.ndarray,
             'test_true_count': first_result['class_counts']['test'][y_class],
             'train_prior': first_result['class_priors']['train'].get(y_class, None),
             'test_prior': first_result['class_priors']['test'].get(y_class, None),
+            'brier_score': first_result['class_brier_scores'].get(y_class, None),
         }
         # Add method-prefixed shift test, quantification interval, and rejection results.
         for shift_test, test_result in test_results.items():

@@ -3,6 +3,8 @@ import pandas as pd
 from sklearn.linear_model import LogisticRegression
 from sklearn.base import ClassifierMixin
 from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import LabelEncoder
+from xgboost import XGBClassifier
 from typing import cast, Set
 
 from pyquantification.classifiers.transformers import (
@@ -18,6 +20,18 @@ MAX_ITERATIONS = 10_000
 # overlaps and unintended correlation. Different orders of magnitude
 # so that they can be repeated several times if needed.
 CLASSIFIER_RANDOM_SEED = 1_000_000
+
+
+class CustomXGBClassifier(XGBClassifier):
+
+    def fit(self, X, y):
+        self.le = LabelEncoder()
+        y = self.le.fit_transform(y)
+        super().fit(X, y)
+        self.classes_ = self.le.classes_
+
+    def predict(self, X):
+        return self.le.inverse_transform(super().predict(X))
 
 
 def logreg_classifier(dataset: Dataset) -> ClassifierMixin:
@@ -49,6 +63,14 @@ def logreg_classifier(dataset: Dataset) -> ClassifierMixin:
     return model
 
 
+def xgboost_classifier(dataset: Dataset) -> ClassifierMixin:
+    model = logreg_classifier(dataset)
+    model.set_params(classifier=CustomXGBClassifier(
+        random_state=CLASSIFIER_RANDOM_SEED,
+    ))
+    return model
+
+
 class SourceProbClassifier(ClassifierMixin):
     """Uses pre-calculated source probabilities from the dataset."""
 
@@ -66,5 +88,6 @@ class SourceProbClassifier(ClassifierMixin):
 
 CLASSIFIERS = {
     'logreg': logreg_classifier,
+    'xgboost': xgboost_classifier,
     'source-prob': SourceProbClassifier,
 }
